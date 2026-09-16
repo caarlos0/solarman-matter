@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+pro: true
+
+project_name: solarman-matter
+
+before:
+  hooks:
+    - bun install --frozen-lockfile
+
+builds:
+  - builder: bun
+    main: ./src/index.ts
+    targets:
+      - linux-x64
+      - linux-arm64
+
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE*
+      - .env.example
+
+nfpms:
+  - vendor: Becker Software LTDA
+    homepage: https://github.com/caarlos0/solarman-matter
+    maintainer: Carlos Becker <root@carlosbecker.dev>
+    description: Expose Solarman solar plants as Matter devices on the local network.
+    license: MIT
+    formats: [deb]
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

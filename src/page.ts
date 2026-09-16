@@ -1,0 +1,276 @@
+/**
+ * The device page. It is inlined so the released binary is a single file
+ * with no assets to install beside it.
+ */
+export const PAGE = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>solarman-matter</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --line: color-mix(in srgb, currentColor 15%, transparent);
+        --muted: color-mix(in srgb, currentColor 55%, transparent);
+      }
+      body {
+        margin: 0 auto;
+        padding: 2rem 1rem 4rem;
+        max-width: 52rem;
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      h1 {
+        flex: 1;
+        margin: 0;
+        font-size: 1.4rem;
+      }
+      button {
+        font: inherit;
+        padding: 0.35rem 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .pairing {
+        margin-bottom: 1.5rem;
+        padding: 0.8rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .pairing code {
+        font-size: 1.1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th {
+        text-align: left;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        padding-bottom: 0.4rem;
+      }
+      td,
+      th {
+        border-bottom: 1px solid var(--line);
+        padding: 0.6rem 0.5rem;
+        vertical-align: top;
+      }
+      td:last-child,
+      th:last-child {
+        text-align: right;
+      }
+      .name {
+        font-weight: 600;
+      }
+      .sub,
+      .readings {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .readings {
+        font-variant-numeric: tabular-nums;
+      }
+      .offline {
+        opacity: 0.55;
+      }
+      .error {
+        margin-bottom: 1rem;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        background: color-mix(in srgb, crimson 18%, transparent);
+      }
+      .error:empty {
+        display: none;
+      }
+      /* The last table row already draws a rule, so no border here. */
+      footer {
+        margin-top: 2rem;
+        text-align: center;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      footer a {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4em;
+        color: inherit;
+        text-decoration: none;
+        border-radius: 4px;
+        padding: 0.3em 0.6em;
+      }
+      footer a:hover {
+        color: inherit;
+        text-decoration: underline;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+      }
+      footer svg {
+        width: 1.1em;
+        height: 1.1em;
+        fill: currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>solarman-matter</h1>
+      <button id="refresh">Refresh from Solarman</button>
+    </header>
+
+    <p class="error" id="error"></p>
+    <div class="pairing" id="pairing" hidden></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Plant</th>
+          <th>Reports</th>
+          <th>Matter</th>
+        </tr>
+      </thead>
+      <tbody id="devices"></tbody>
+    </table>
+
+    <footer>
+      <a
+        href="https://github.com/caarlos0/solarman-matter"
+        target="_blank"
+        rel="noreferrer"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+          />
+        </svg>
+        caarlos0/solarman-matter
+      </a>
+    </footer>
+
+    <script type="module">
+      // Matter reports milli-units, so each reading is divided back.
+      const UNITS = {
+        power: ["W", 1000, 0],
+        energy: ["kWh", 1000000, 1],
+        voltage: ["V", 1000, 1],
+        current: ["A", 1000, 2],
+        frequency: ["Hz", 1000, 2],
+      };
+
+      const tbody = document.getElementById("devices");
+      const errorBox = document.getElementById("error");
+      const pairing = document.getElementById("pairing");
+      const refresh = document.getElementById("refresh");
+
+      async function call(path, options) {
+        const response = await fetch(path, options);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? response.statusText);
+        return body;
+      }
+
+      function format(device) {
+        return Object.entries(device.readings)
+          .map(([quantity, value]) => {
+            const [unit, divisor, decimals] = UNITS[quantity];
+            return \`\${(value / divisor).toFixed(decimals)} \${unit}\`;
+          })
+          .join(" · ");
+      }
+
+      function capabilities(device) {
+        return device.quantities.length
+          ? device.quantities.join(", ")
+          : "no production data";
+      }
+
+      function render(devices) {
+        tbody.replaceChildren(
+          ...devices.map((device) => {
+            const row = document.createElement("tr");
+            if (!device.online) row.className = "offline";
+
+            const name = document.createElement("td");
+            name.innerHTML = \`<div class="name"></div><div class="sub"></div><div class="readings"></div>\`;
+            name.querySelector(".name").textContent = device.name;
+            name.querySelector(".sub").textContent =
+              \`\${device.productName}\${device.online ? "" : " · offline"}\`;
+            name.querySelector(".readings").textContent = device.enabled
+              ? format(device)
+              : "";
+
+            const measures = document.createElement("td");
+            measures.className = "sub";
+            measures.textContent = capabilities(device);
+
+            const action = document.createElement("td");
+            const button = document.createElement("button");
+            button.textContent = device.enabled ? "Remove" : "Expose";
+            button.disabled = !device.quantities.length;
+            button.onclick = async () => {
+              button.disabled = true;
+              await update(\`/api/devices/\${encodeURIComponent(device.id)}\`, {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ enabled: !device.enabled }),
+              });
+            };
+            action.append(button);
+
+            row.append(name, measures, action);
+            return row;
+          }),
+        );
+      }
+
+      async function update(path, options) {
+        errorBox.textContent = "";
+        try {
+          render((await call(path, options)).devices);
+        } catch (error) {
+          errorBox.textContent = error.message;
+          await load();
+        }
+      }
+
+      async function load() {
+        const state = await call("/api/state");
+        render(state.devices);
+        if (state.commissioning) {
+          pairing.hidden = false;
+          pairing.innerHTML = \`Pair this bridge with code <code></code> · <a target="_blank" rel="noreferrer">QR code</a>\`;
+          pairing.querySelector("code").textContent =
+            state.commissioning.manualPairingCode;
+          pairing.querySelector("a").href =
+            \`https://project-chip.github.io/connectedhomeip/qrcode.html?data=\${encodeURIComponent(state.commissioning.qrPairingCode)}\`;
+        } else {
+          pairing.hidden = true;
+        }
+      }
+
+      refresh.onclick = async () => {
+        refresh.disabled = true;
+        await update("/api/refresh", { method: "POST" });
+        refresh.disabled = false;
+      };
+
+      await load();
+      setInterval(() => load().catch(() => {}), 10000);
+    </script>
+  </body>
+</html>
+`;
