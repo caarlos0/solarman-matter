@@ -92,9 +92,15 @@ The logger is powered by the inverter, so it is **gone every night**. This
 shapes the whole design:
 
 - `LoggerUnreachable` means asleep, not broken. It is not reported as a fault.
-- The Matter endpoint must persist, marked unreachable, and keep its last
-  values. A device that disappears each evening loses its history in the
-  controller.
+- The Matter endpoint must persist, marked unreachable. A device that
+  disappears each evening loses its history in the controller.
+- Everything measured at that instant goes to **zero**, and the lifetime total
+  is **kept**. See `idle()` in `src/solarman/measurements.ts`. Leaving the last
+  watts in place lets a controller that integrates power invent a night of
+  production; zeroing the total reads as a meter that was replaced.
+- The total is left out of the update rather than written as null, so a value
+  already published survives. Matter's `set()` skips a behaviour that is
+  absent, so an omitted cluster is untouched.
 - The endpoint id is therefore the **inverter serial**, which is stable and
   written to the state file, never the address, which DHCP can move.
 - A first run after dark cannot learn the serial, so that inverter appears at

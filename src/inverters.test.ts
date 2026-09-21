@@ -31,6 +31,15 @@ const MILLI = {
   frequency: 59_950,
 };
 
+/** What a sleeping inverter publishes: generating nothing, total intact. */
+const IDLE = {
+  power: 0,
+  voltage: 0,
+  current: 0,
+  frequency: 0,
+  energy: MILLI.energy,
+};
+
 const SERIAL = "2302226555";
 
 /** A logger under test. `answer` decides what the next read does. */
@@ -136,7 +145,13 @@ test("remembers the serial so a start after dark still bridges", async () => {
 
   assert.deepEqual(night.added, [SERIAL]);
   assert.deepEqual(night.updates, [
-    { id: SERIAL, reachable: false, readings: undefined },
+    {
+      id: SERIAL,
+      reachable: false,
+      // Nothing was read this run, so there is no total to publish. The
+      // instantaneous values are still zero: the logger is dark.
+      readings: { power: 0, voltage: 0, current: 0, frequency: 0 },
+    },
   ]);
 });
 
@@ -155,7 +170,7 @@ test("asks for the serial only once", async () => {
   assert.equal(logger.serialCalls, 1);
 });
 
-test("keeps the last readings while the logger sleeps", async () => {
+test("reports no generation once the logger sleeps", async () => {
   const logger = fakeLogger("10.0.0.1");
   const { bridge, updates } = fakeBridge();
   const inverters = new Inverters([logger], bridge, await stateFile());
@@ -172,13 +187,36 @@ test("keeps the last readings while the logger sleeps", async () => {
   assert.equal(view.reachable, false);
   // A night is not a fault, so nothing is reported as broken.
   assert.equal(view.error, undefined);
-  assert.deepEqual(view.readings, MILLI);
-  // Matter is told the device is unreachable, and the values are left alone.
+
+  // Leaving the last watts standing would let a controller that adds power up
+  // over time invent a whole night of production.
   assert.deepEqual(updates.at(-1), {
     id: SERIAL,
     reachable: false,
-    readings: undefined,
+    readings: IDLE,
   });
+});
+
+test("keeps the lifetime total while the logger sleeps", async () => {
+  const logger = fakeLogger("10.0.0.1");
+  const { bridge, updates } = fakeBridge();
+  const inverters = new Inverters([logger], bridge, await stateFile());
+
+  await inverters.load();
+  await inverters.poll();
+
+  logger.answer = async () => {
+    throw new LoggerUnreachable("10.0.0.1", "no connection");
+  };
+  await inverters.poll();
+
+  // A total that fell to zero every evening would read as a meter that had
+  // been replaced, and the page still has something to show.
+  assert.equal(
+    (updates.at(-1)!.readings as Record<string, number>).energy,
+    MILLI.energy,
+  );
+  assert.deepEqual(inverters.list()[0]!.readings, MILLI);
 });
 
 test("shows a fault that is not simply a sleeping logger", async () => {

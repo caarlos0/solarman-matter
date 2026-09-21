@@ -1,6 +1,6 @@
 import type { Bridge } from "./matter/bridge.js";
 import { LoggerUnreachable, type LoggerReading } from "./solarman/local.js";
-import { toReadings, type Readings } from "./solarman/measurements.js";
+import { idle, toReadings, type Readings } from "./solarman/measurements.js";
 import { loadSerials, saveSerials } from "./state.js";
 
 /** What this bridge needs of a data logger on the local network. */
@@ -142,10 +142,10 @@ export class Inverters {
     }
     await this.bridge.updateDevice(inverter.serial, {
       reachable: inverter.reachable,
-      // The last readings stay in place while the logger sleeps. Matter marks
-      // the device unreachable, so a controller knows they are stale, and a
-      // null total would read as a plant that had produced nothing ever.
-      readings: inverter.reachable ? inverter.readings : undefined,
+      readings:
+        inverter.reachable && inverter.readings !== undefined
+          ? inverter.readings
+          : idle(inverter.readings),
     });
   }
 }

@@ -106,13 +106,25 @@ bridge can change a setting on the logger or the inverter.
 The logger is powered by the inverter, which is powered by the sun, so it
 disappears every night. That is not a fault:
 
-- The Matter device stays, marked unreachable, and keeps its last values. A
-  controller that dropped the device each evening would lose its history.
+- The Matter device stays, marked unreachable. A controller that dropped the
+  device each evening would lose its history.
+- Everything measured at that instant is published as **zero**: the power, the
+  voltage, the current and the frequency. An inverter whose logger is dark is
+  generating nothing, and a controller that adds power up over time would turn
+  the last watts of the day into a whole night of production that never
+  happened.
+- The lifetime total is **kept**, because it is not measured at an instant. A
+  total that fell to zero every evening would read as a meter that had been
+  replaced.
 - The device is named after the inverter serial, not the address, so it
   survives a logger that DHCP moved. The serial is asked of the logger once and
   written to the state file.
 - A first run started after dark therefore has no serial to publish. The
   inverter appears at first light, and every run after that is immediate.
+
+A logger that is unreachable in daylight, because of a network fault rather
+than the dark, is reported the same way. The readings then understate the
+plant until it answers again, which is the safer of the two mistakes.
 
 ## Controllers
 

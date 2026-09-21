@@ -89,8 +89,7 @@ export type DeviceInfo = {
 
 export type DeviceState = {
   reachable: boolean;
-  /** Absent while the logger sleeps, which leaves the last values in place. */
-  readings?: Readings;
+  readings: Partial<Readings>;
 };
 
 /**
@@ -119,23 +118,32 @@ export class DeviceEndpoint {
 
   async update({ reachable, readings }: DeviceState): Promise<void> {
     await this.root.set({ bridgedDeviceBasicInformation: { reachable } });
-    if (readings) {
-      await this.#meter.set(measurements(readings));
-    }
+    await this.#meter.set(measurements(readings));
   }
 }
 
-function measurements(readings: Readings) {
+/**
+ * The Matter attributes for a set of readings.
+ *
+ * Exported so the mapping can be checked without a running Matter node.
+ */
+export function measurements(readings: Partial<Readings>) {
   return {
     electricalPowerMeasurement: {
-      activePower: readings.power,
-      voltage: readings.voltage,
-      activeCurrent: readings.current,
-      frequency: readings.frequency,
+      activePower: readings.power ?? null,
+      voltage: readings.voltage ?? null,
+      activeCurrent: readings.current ?? null,
+      frequency: readings.frequency ?? null,
     },
-    electricalEnergyMeasurement: {
-      cumulativeEnergyExported: { energy: readings.energy },
-    },
+    // The total is left untouched when it is not known, rather than written
+    // as null, so a reading already published survives an unanswered poll.
+    ...(readings.energy === undefined
+      ? {}
+      : {
+          electricalEnergyMeasurement: {
+            cumulativeEnergyExported: { energy: readings.energy },
+          },
+        }),
   };
 }
 
