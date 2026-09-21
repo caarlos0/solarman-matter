@@ -114,6 +114,23 @@ disappears every night. That is not a fault:
 - A first run started after dark therefore has no serial to publish. The
   inverter appears at first light, and every run after that is immediate.
 
+## Controllers
+
+An inverter is a **Solar Power** device with an **Electrical Sensor** child
+endpoint. What a controller makes of that differs.
+
+**Home Assistant** reads the electrical sensor and shows the power, the
+lifetime production, the voltage, the current and the frequency.
+
+**Apple Home** needs **iOS and tvOS 27 or later**, and the hub decides, not the
+phone: an iPhone on 27 paired to an Apple TV on 26 still behaves like 26.
+Apple added the Electrical Sensor device type in 27, where it feeds the Home
+app energy tab. Before 27 it is not recognised at all, and the inverter shows
+as a generic tile with a single value.
+
+Apple has no solar device type, in 27 or any earlier release, so the tile
+itself stays generic. Only the readings move to the right place.
+
 ## State
 
 The Matter fabric and node state live in `~/.matter/solarman-matter`. The
@@ -150,6 +167,8 @@ controller keeps a dead entry for the old bridge, so remove it by hand.
 - The register map is the Deye string profile. Hybrid and battery inverters
   answer a different one and are untested.
 - The web page has no authentication. Keep it on a trusted network.
+- Apple Home shows the readings only from iOS and tvOS 27, and never labels the
+  device as solar. See [Controllers](#controllers).
 
 ## Development
 

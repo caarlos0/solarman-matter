@@ -115,6 +115,44 @@ A plant produces, so the total goes to `cumulativeEnergyExported`. Use the
 Today's production resets each night, so it cannot feed a cumulative attribute.
 It is shown on the page only.
 
+### Keep the meter on the child endpoint
+
+**Do not flatten these two endpoints into one.** It looks like a
+simplification, because the Solar Power parent carries no cluster of its own.
+It breaks Apple Home.
+
+Apple recognises the measurement clusters only on a dedicated child endpoint.
+A reported cause of a device showing no power in Apple Home is exactly this:
+the `electrical*Measurement` attributes put on the main endpoint instead of a
+sub-endpoint. The Matter specification also expects the meter as its own
+Electrical Sensor, so the composed shape is both correct and required.
+
+### What Apple supports
+
+Checked in September 2026 against `chipplugin-protocol-map.plist`, the
+device-type map inside Apple's own `HomeKitMatter.framework`:
+
+| Device type                  | iOS/tvOS 26 | iOS/tvOS 27 |
+| ---------------------------- | ----------- | ----------- |
+| Electrical Sensor (`0x0510`) | no          | **yes**     |
+| Electrical Meter (`0x0514`)  | no          | **yes**     |
+| Solar Power (`0x0017`)       | no          | no          |
+| Battery Storage (`0x0018`)   | no          | no          |
+
+On 26 the map holds no electrical device type at all, so the inverter falls
+back to a generic tile. On 27 the readings reach the energy tab of the Home
+app, but the tile stays generic, because Apple maps no solar device type.
+
+The home hub is the Matter controller, so its build decides this, not the
+version on the phone.
+
+Do not report watts as a light sensor in lux to force a number onto an Apple
+tile. It is a known trick, it shows the wrong unit, it cannot carry a
+cumulative total, and 27 makes it pointless.
+
+Apple's EnergyKit and Grid Forecast only publish a forecast to apps. There is
+no way to feed production into them, and they are US only.
+
 ## Conventions
 
 - Every setting this project owns is prefixed `SOLARMAN_`. Bare names collide
