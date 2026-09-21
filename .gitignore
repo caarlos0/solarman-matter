@@ -9,8 +9,5 @@ dist/
 # bun build --compile
 /solarman-matter
 
-# Default SOLARMAN_STATE_FILE when it is pointed at the project directory.
-/storage.json
-
 # bun build temporary files
 *.bun-build

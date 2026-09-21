@@ -34,7 +34,7 @@ nfpms:
   - vendor: Becker Software LTDA
     homepage: https://github.com/caarlos0/solarman-matter
     maintainer: Carlos Becker <root@carlosbecker.dev>
-    description: Expose Solarman solar plants as Matter devices on the local network.
+    description: Expose solar inverters as Matter devices, read on the local network.
     license: MIT
     formats: [deb]
 

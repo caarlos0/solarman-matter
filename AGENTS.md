@@ -1,19 +1,19 @@
 # AGENTS.md
 
-Bridge that exposes the inverters of a SOLARMAN account as Matter devices on
-the local network. A web page lists the plants and the user picks which ones to
-expose.
+Bridge that exposes solar inverters as Matter devices. Each inverter is read
+through its Solarman data logger on the local network. There is no cloud.
 
 ## Safety
 
-This bridge only reads. The Solarman control endpoints need a separate grant
-and are not used. Keep it that way unless the user asks for control.
+This bridge only reads. It sends Modbus function 3, read holding registers,
+and nothing else. Never add a write path: the same protocol can change inverter
+settings, and a wrong register is a real appliance on a roof.
 
 The bridge locks its Matter storage. Always override it when you run a test
 instance, or you take over the paired production node:
 
 ```sh
-SOLARMAN_WEB_PORT=8099 MATTER_PORT=5599 \
+SOLARMAN_LOCAL_HOSTS=192.168.107.197 SOLARMAN_WEB_PORT=8099 MATTER_PORT=5599 \
   MATTER_STORAGE_PATH=/tmp/sm-test SOLARMAN_STATE_FILE=/tmp/sm-test.json \
   bun src/index.ts
 ```
@@ -33,75 +33,72 @@ Bun loads `.env` itself. There is no Node, no npm, and no bundler step.
 
 ## Layout
 
-| File                            | Role                                              |
-| ------------------------------- | ------------------------------------------------- |
-| `src/index.ts`                  | Startup and the poll timer.                       |
-| `src/config.ts`                 | Environment settings.                             |
-| `src/devices.ts`                | Registry: which inverters exist and which are exposed. |
-| `src/state.ts`                  | Reads and writes the exposed-plant list.          |
-| `src/web.ts`                    | HTTP API and page serving.                        |
-| `src/page.ts`                   | The web page.                                     |
-| `src/solarman/api.ts`           | Solarman cloud client.                            |
-| `src/solarman/measurements.ts`  | Reads data points into Matter milli-units.        |
-| `src/matter/bridge.ts`          | Matter server node and aggregator.                |
-| `src/matter/device-endpoint.ts` | Maps an inverter onto Matter endpoints.           |
+| File                            | Role                                            |
+| ------------------------------- | ----------------------------------------------- |
+| `src/index.ts`                  | Startup and the poll timer.                     |
+| `src/config.ts`                 | Environment settings.                           |
+| `src/inverters.ts`              | Registry: reads the loggers, feeds Matter.      |
+| `src/state.ts`                  | Remembers the serial behind each address.       |
+| `src/web.ts`                    | HTTP API and page serving.                      |
+| `src/page.ts`                   | The web page.                                   |
+| `src/solarman/local.ts`         | Solarman V5 and Modbus client.                  |
+| `src/solarman/measurements.ts`  | Scales a reading into Matter milli-units.       |
+| `src/matter/bridge.ts`          | Matter server node and aggregator.              |
+| `src/matter/device-endpoint.ts` | Maps an inverter onto Matter endpoints.         |
 
-## Solarman cloud
+## The logger
 
-Base URL `https://globalapi.solarmanpv.com`, or `https://api.solarmanpv.com`
-for an account in China. The account decides which one answers, not the
-location of the bridge.
+Port 8899 speaks [Solarman V5][v5], which wraps Modbus RTU. The register map is
+the [Deye string profile][profile].
 
-Every call is a `POST` with a JSON body and `?language=en`. Failures answer
-**HTTP 200** with `{"success": false, "code": "…", "msg": "…"}`, so branch on
-`success`, never on the status. `code` is a string.
+[v5]: https://pysolarmanv5.readthedocs.io/en/stable/solarmanv5_protocol.html
+[profile]: https://github.com/davidrapan/ha-solarman
 
-- `/account/v1.0/token?appId=…` — login. `appId` goes in the query, the rest in
-  the body: `appSecret`, `email`, `password`. The password must be a
-  **lowercase hex SHA-256** digest. Add `orgId` for a SOLARMAN Business
-  account; leave it out for a Smart account, or the plant list comes back
-  empty.
-- `/station/v1.0/list` — plants, paged with `page` and `size`.
-- `/station/v1.0/device` — devices of a plant. The array is `deviceListItems`.
-  `connectStatus` is `0` offline, `1` online, `2` alarm — **not** the same
-  scale as `deviceState` in `currentData`.
-- `/device/v1.0/currentData` — last reported values of one device. The logger
-  serial number returns an empty list, so always query the `INVERTER`.
+Every V5 frame carries the **logger** serial, which is not the inverter serial.
+The logger serial is read from `http://<host>/status.html`, behind basic auth,
+as `var cover_mid`. The inverter serial is in holding registers 0 to 18.
 
-The token lasts about 60 days and there is no refresh endpoint. Logging in
-again is safe: it does not invalidate the earlier token.
+The telemetry block is registers 59 to 112, both ends inclusive:
 
-After the login, `appId` and `appSecret` are never sent again. The token goes
-in `Authorization: bearer <token>` — the space after `bearer` is part of the
-format.
+| Register | Value                 | Scale     |
+| -------- | --------------------- | --------- |
+| 59       | inverter status       | raw       |
+| 60       | production today      | ÷10 kWh   |
+| 63, 64   | production total      | ÷10 kWh   |
+| 73 to 75 | AC volts per phase    | ÷10 V     |
+| 76 to 78 | AC amps per phase     | ÷10 A, signed |
+| 79       | AC frequency          | ÷100 Hz   |
+| 80, 81   | AC power              | ÷10 W     |
+| 90       | radiator temperature  | −1000, ÷10 °C |
+| 109, 111 | DC volts per string   | ÷10 V     |
+| 110, 112 | DC amps per string    | ÷10 A     |
 
-`appSecret` and `appId` never appear in the query of later calls.
+Things that bite:
 
-### Errors worth knowing
+- 32-bit values put the **low word first**, although Modbus is big-endian.
+- The current registers are **signed**; `0xFFF6` is −1.0 A, not 6553.0 A.
+- Temperatures carry a **1000 offset**. A sensor that is not fitted reads 0,
+  which is −100 °C, and is not a measurement.
+- This logger appends two zero bytes **after** the Modbus CRC. Drop them before
+  the CRC is checked.
+- The logger sends unsolicited heartbeats, control code `0x4710`. Skip them and
+  never answer: an answer would be a write.
+- The status code in register 59 has no mapping that was ever verified here.
+  Do not invent one.
 
-| Code      | Meaning                                                     |
-| --------- | ----------------------------------------------------------- |
-| `2101009` | AppId or API is locked. Usually the wrong data center.       |
-| `2101010` | AppId insufficient allowance. The call quota is used up.     |
-| `2101017` | No `Authorization` header, or no `bearer ` prefix.           |
-| `2101019` | Invalid token, appId, appSecret or account.                  |
-| `2101022` | Business error. A Smart account with an `orgId`, or reverse. |
-| `2101025` | Wrong account, or a password that is not lowercase SHA-256.  |
+## Nights
 
-Limits are 300 calls per 10 seconds, plus a separate lifetime allowance per
-app.
+The logger is powered by the inverter, so it is **gone every night**. This
+shapes the whole design:
 
-### Data points
-
-`currentData` returns `dataList` as `{key, name, value, unit}`. The key set
-depends on the inverter model, so treat it as an open map. `value` is always a
-string, and some points hold a status word. `name` is localised; `key` is
-stable. Take the unit from the response, never from a table of your own.
-
-Keys are matched **exactly**, because the trailing digit is meaningful:
-`Et_ge0` is the total production, while `Et_ge1` and `Et_ge2` are the totals of
-the single PV strings. `Etdy_ge0` is the production of today and resets each
-night, so it cannot feed a cumulative Matter attribute.
+- `LoggerUnreachable` means asleep, not broken. It is not reported as a fault.
+- The Matter endpoint must persist, marked unreachable, and keep its last
+  values. A device that disappears each evening loses its history in the
+  controller.
+- The endpoint id is therefore the **inverter serial**, which is stable and
+  written to the state file, never the address, which DHCP can move.
+- A first run after dark cannot learn the serial, so that inverter appears at
+  first light. There is no way around it; do not fake an id.
 
 ## Matter
 
@@ -115,6 +112,9 @@ because that is the endpoint the aggregator owns.
 A plant produces, so the total goes to `cumulativeEnergyExported`. Use the
 `ExportedEnergy` feature, not `ImportedEnergy`.
 
+Today's production resets each night, so it cannot feed a cumulative attribute.
+It is shown on the page only.
+
 ## Conventions
 
 - Every setting this project owns is prefixed `SOLARMAN_`. Bare names collide
@@ -124,13 +124,18 @@ A plant produces, so the total goes to `cumulativeEnergyExported`. Use the
 - The released binary carries no files beside it, so anything the page needs
   must live in the source.
 - Tests use the `node:test` API and run under `bun test`.
+- `Inverters` takes its loggers as a parameter, which is the seam the tests
+  use. Do not reach into its private fields.
 - Releases are built by GoReleaser Pro with the Bun builder, for `linux-x64`
   and `linux-arm64`. Its output directory is `dist/`.
 
 ## Verifying a change
 
 Type-check and test, then run a throwaway instance with the overrides above and
-read `/api/state`. To check a Linux binary, build it and run it under Docker:
+read `/api/state`. A real logger is the only way to check the register map; the
+tests use recorded frames.
+
+To check a Linux binary, build it and run it under Docker:
 
 ```sh
 goreleaser build --snapshot --clean
@@ -149,6 +154,7 @@ To check the page, screenshot it rather than guessing:
 
 ## Not supported yet
 
-Batteries, meters, grid import and household consumption. Plants with more than
-one inverter get one Matter device per inverter; the bridge does not add them
-up. Updates are polled. The web page has no authentication.
+Batteries, meters, grid import and household consumption. The first AC phase
+only, and no DC strings. Plants with more than one inverter get one Matter
+device each; the bridge does not add them up. Hybrid inverters answer a
+different register map and are untested. The web page has no authentication.

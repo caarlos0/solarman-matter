@@ -8,10 +8,10 @@ import { SolarPowerDevice } from "@matter/main/devices/solar-power";
 import { ElectricalSensorEndpoint } from "@matter/main/endpoints/electrical-sensor";
 import { MeasurementType } from "@matter/main/types";
 
-import type {
-  Measurement,
-  Quantity,
-  Readings,
+import {
+  QUANTITIES,
+  type Quantity,
+  type Readings,
 } from "../solarman/measurements.js";
 
 const MEASUREMENT_TYPES: Record<Quantity, MeasurementType> = {
@@ -45,32 +45,64 @@ const PlantEndpoint = SolarPowerDevice.with(
   BridgedDeviceBasicInformationServer,
 );
 
+/**
+ * Matter requires an accuracy entry per measurement type. The logger
+ * publishes no accuracy, so every range is declared as exact.
+ */
+function accuracyOf(quantity: Quantity) {
+  return {
+    measurementType: MEASUREMENT_TYPES[quantity],
+    measured: true,
+    minMeasuredValue: 0,
+    maxMeasuredValue: Number.MAX_SAFE_INTEGER,
+    accuracyRanges: [
+      { rangeMin: 0, rangeMax: Number.MAX_SAFE_INTEGER, fixedMax: 1 },
+    ],
+  };
+}
+
+/** Every inverter reports the same quantities, so one shape serves them all. */
+const POWER_QUANTITIES = QUANTITIES.filter((quantity) => quantity !== "energy");
+
+const DEFAULTS = {
+  electricalPowerMeasurement: {
+    powerMode: ElectricalPowerMeasurement.PowerMode.Ac,
+    numberOfMeasurementTypes: POWER_QUANTITIES.length,
+    accuracy: POWER_QUANTITIES.map(accuracyOf),
+    activePower: null,
+    voltage: null,
+    activeCurrent: null,
+    frequency: null,
+  },
+  electricalEnergyMeasurement: {
+    accuracy: accuracyOf("energy"),
+    cumulativeEnergyExported: null,
+  },
+};
+
 export type DeviceInfo = {
   id: string;
   name: string;
   productName: string;
   reachable: boolean;
-  measurements: Measurement[];
 };
 
 export type DeviceState = {
   reachable: boolean;
-  readings: Readings;
+  /** Absent while the logger sleeps, which leaves the last values in place. */
+  readings?: Readings;
 };
 
 /**
- * A Solarman inverter exposed as a bridged Matter solar power device, with its
- * meter as a composed electrical sensor endpoint.
+ * An inverter exposed as a bridged Matter solar power device, with its meter
+ * as a composed electrical sensor endpoint.
  */
 export class DeviceEndpoint {
   readonly #meter: Endpoint<typeof MeterEndpoint>;
   readonly root: Endpoint<typeof PlantEndpoint>;
 
   constructor(info: DeviceInfo) {
-    this.#meter = new Endpoint(MeterEndpoint, {
-      id: "meter",
-      ...meterDefaults(info.measurements),
-    });
+    this.#meter = new Endpoint(MeterEndpoint, { id: "meter", ...DEFAULTS });
 
     this.root = new Endpoint(PlantEndpoint, {
       id: endpointId(info.id),
@@ -87,60 +119,23 @@ export class DeviceEndpoint {
 
   async update({ reachable, readings }: DeviceState): Promise<void> {
     await this.root.set({ bridgedDeviceBasicInformation: { reachable } });
-    await this.#meter.set(measurements(readings));
+    if (readings) {
+      await this.#meter.set(measurements(readings));
+    }
   }
 }
 
 function measurements(readings: Readings) {
   return {
     electricalPowerMeasurement: {
-      activePower: readings.power ?? null,
-      voltage: readings.voltage ?? null,
-      activeCurrent: readings.current ?? null,
-      frequency: readings.frequency ?? null,
+      activePower: readings.power,
+      voltage: readings.voltage,
+      activeCurrent: readings.current,
+      frequency: readings.frequency,
     },
     electricalEnergyMeasurement: {
-      cumulativeEnergyExported:
-        readings.energy === undefined ? null : { energy: readings.energy },
+      cumulativeEnergyExported: { energy: readings.energy },
     },
-  };
-}
-
-function meterDefaults(measurements: Measurement[]) {
-  const powerAccuracy = measurements
-    .filter(({ quantity }) => quantity !== "energy")
-    .map(({ quantity }) => accuracyOf(quantity));
-
-  return {
-    electricalPowerMeasurement: {
-      powerMode: ElectricalPowerMeasurement.PowerMode.Ac,
-      numberOfMeasurementTypes: powerAccuracy.length,
-      accuracy: powerAccuracy,
-      activePower: null,
-      voltage: null,
-      activeCurrent: null,
-      frequency: null,
-    },
-    electricalEnergyMeasurement: {
-      accuracy: accuracyOf("energy"),
-      cumulativeEnergyExported: null,
-    },
-  };
-}
-
-/**
- * Matter requires an accuracy entry per measurement type. Solarman publishes
- * no accuracy, so every range is declared as exact.
- */
-function accuracyOf(quantity: Quantity) {
-  return {
-    measurementType: MEASUREMENT_TYPES[quantity],
-    measured: true,
-    minMeasuredValue: 0,
-    maxMeasuredValue: Number.MAX_SAFE_INTEGER,
-    accuracyRanges: [
-      { rangeMin: 0, rangeMax: Number.MAX_SAFE_INTEGER, fixedMax: 1 },
-    ],
   };
 }
 

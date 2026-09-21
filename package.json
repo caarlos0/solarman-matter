@@ -1,7 +1,7 @@
 {
   "name": "solarman-matter",
   "version": "0.1.0",
-  "description": "Expose Solarman solar plants as Matter devices",
+  "description": "Expose solar inverters as Matter devices, read on the local network",
   "main": "src/index.ts",
   "scripts": {
     "test": "bun test src",

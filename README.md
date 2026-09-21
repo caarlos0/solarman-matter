@@ -1,15 +1,14 @@
 # solarman-matter
 
-Exposes the solar plants of a [SOLARMAN](https://www.solarmanpv.com) account as
-Matter devices on your local network.
+Exposes a solar inverter as a Matter device on your local network.
 
-A web page lists every inverter in your account. Choose the ones you want, and
-the bridge publishes each of them as a **Solar Power** device with a composed
-**Electrical Sensor** endpoint.
+The inverter is read through its Solarman data logger, on your own network.
+There is no cloud account, no API key and no call quota: the bridge speaks to
+the logger directly, and keeps working when the internet does not.
 
-Controllers such as Home Assistant then show the generated power and the total
-production, plus the AC voltage, current and frequency when the inverter reports
-them.
+Each inverter is published as a **Solar Power** device with a composed
+**Electrical Sensor** endpoint, so controllers such as Home Assistant show the
+generated power and the lifetime production without a custom integration.
 
 ## Install
 
@@ -31,111 +30,94 @@ tar xf solarman-matter_Linux_x86_64.tar.gz
 
 ## Requirements
 
-- A SOLARMAN Smart or SOLARMAN Business account that owns the plants.
-- A developer `appId` and `appSecret` with call allowance (see below).
+- A Solarman data logger on the same network as the bridge, the kind that ships
+  with Deye, Sofar and similar string inverters.
 - [Bun](https://bun.sh) 1.4 or later, to run from source.
 
 ## Setup
 
-The Solarman Open API is not self-service. Write to `service@solarmanpv.com`
-with your contact details, your SOLARMAN account, your customer type and what
-you want to build. Solarman then creates an app and sends you the `appId` and
-the `appSecret`.
+Find the logger on your network. It answers on port 8899, and its status page
+is on port 80. Give it a fixed address in your router, so it does not move.
 
-Ask for **call allowance** in the same message. Without it every call answers
-`2101010 appId insufficient allowance`, including the login.
-
-Copy `.env.example` to `.env` and fill it in.
+Copy `.env.example` to `.env` and put the address in `SOLARMAN_LOCAL_HOSTS`.
 
 ```sh
 bun install
 bun start
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080> for the pairing code.
 
-## Using the web page
+## The web page
 
-The page lists every inverter of every plant in your account.
+The page shows the pairing code and what each inverter last reported: the power
+now, the production today and the lifetime total.
 
-- **Expose** adds the inverter to the Matter bridge. The controller sees it at
-  once; no restart is needed.
-- **Remove** takes it off the bridge again.
-- An inverter that reports no production cannot be exposed, so its button is
-  disabled.
-- **Refresh from Solarman** reloads the account. A plant you deleted is removed
-  from the bridge too.
-- Exposed plants show their latest reading, refreshed every
-  `SOLARMAN_POLL_INTERVAL` seconds.
-
-The page also shows the pairing code. Use it to commission the bridge in your
-Matter controller. The choice of plants is stored, so it survives a restart.
+There is nothing to choose. You listed the inverters when you wrote their
+addresses in the configuration, so all of them are bridged.
 
 ## Configuration
 
-| Variable                 | Required | Default                          | Meaning                                    |
-| ------------------------ | -------- | -------------------------------- | ------------------------------------------ |
-| `SOLARMAN_APP_ID`        | yes      |                                  | Developer app id.                          |
-| `SOLARMAN_APP_SECRET`    | yes      |                                  | Developer app secret.                      |
-| `SOLARMAN_EMAIL`         | yes      |                                  | Account that owns the plants.              |
-| `SOLARMAN_PASSWORD`      | yes      |                                  | Account password, in plain text.           |
-| `SOLARMAN_ORG_ID`        | no       |                                  | Merchant id of a Business account.         |
-| `SOLARMAN_ENDPOINT`      | no       | `https://globalapi.solarmanpv.com` | Overrides the data center.               |
-| `SOLARMAN_POLL_INTERVAL` | no       | `300`                            | Seconds between Solarman cloud reads.      |
-| `SOLARMAN_WEB_PORT`      | no       | `8080`                           | Port of the web page.                      |
-| `SOLARMAN_STATE_FILE`    | no       | next to Matter data              | File that stores the exposed plants.       |
-| `MATTER_PASSCODE`        | no       | `20202021`                       | Commissioning passcode.                    |
-| `MATTER_DISCRIMINATOR`   | no       | `3840`                           | Commissioning discriminator.               |
-| `MATTER_PORT`            | no       | `5540`                           | Matter UDP port.                           |
+| Variable                  | Required | Default                       | Meaning                                    |
+| ------------------------- | -------- | ----------------------------- | ------------------------------------------ |
+| `SOLARMAN_LOCAL_HOSTS`    | yes      |                               | Logger addresses, comma separated.         |
+| `SOLARMAN_LOCAL_USER`     | no       | `admin`                       | Logger web login.                          |
+| `SOLARMAN_LOCAL_PASSWORD` | no       | `admin`                       | Logger web password.                       |
+| `SOLARMAN_POLL_INTERVAL`  | no       | `30`                          | Seconds between reads.                     |
+| `SOLARMAN_WEB_PORT`       | no       | `8080`                        | Port of the web page.                      |
+| `SOLARMAN_STATE_FILE`     | no       | next to Matter data           | Remembers the serial behind each address.  |
+| `MATTER_PASSCODE`         | no       | `20202021`                    | Commissioning passcode.                    |
+| `MATTER_DISCRIMINATOR`    | no       | `3840`                        | Commissioning discriminator.               |
+| `MATTER_PORT`             | no       | `5540`                        | Matter UDP port.                           |
 
-The bridge hashes the password with SHA-256 before it sends it, because the
-platform rejects anything else.
-
-Every setting this bridge owns is prefixed, because bare names such as `APP_ID`
-collide with other tools. A real environment variable always wins over the
-`.env` file, so an old export can hide the file without a warning.
+Every setting this bridge owns is prefixed, because bare names such as
+`LOCAL_HOSTS` collide with other tools. A real environment variable always wins
+over the `.env` file, so an old export can hide the file without a warning.
 
 ## How it works
 
-1. Logs in with the app credentials and the account
-   (`/account/v1.0/token?appId=…`). There is no refresh endpoint, so the bridge
-   logs in again when the token nears its end.
-2. Lists the plants (`/station/v1.0/list`) and their inverters
-   (`/station/v1.0/device`).
-3. Reads each inverter once (`/device/v1.0/currentData`) and keeps the data
-   points that report production. Every point carries its own unit, so values
-   convert into the Matter milli-units (mW, mWh, mV, mA, mHz).
-4. Polls the same endpoint for the exposed plants and writes the values into
-   the Matter attributes.
+The logger speaks [Solarman V5][v5] on port 8899, which wraps Modbus RTU. The
+bridge asks it for holding registers 59 to 112, the telemetry block of the
+[Deye string profile][profile], and writes the values into Matter.
 
-| Solarman key           | Matter attribute                     |
-| ---------------------- | ------------------------------------ |
-| `APo_t1`, `INV_O_P_T`  | `activePower`                        |
-| `Et_ge0`               | `cumulativeEnergyExported`           |
-| `AV1`                  | `voltage`                            |
-| `AC1`                  | `activeCurrent`                      |
-| `A_Fo1`, `AC_Fo1`      | `frequency`                          |
+[v5]: https://pysolarmanv5.readthedocs.io/en/stable/solarmanv5_protocol.html
+[profile]: https://github.com/davidrapan/ha-solarman
+
+| Register   | Matter attribute                     |
+| ---------- | ------------------------------------ |
+| 80, 81     | `activePower`                        |
+| 63, 64     | `cumulativeEnergyExported`           |
+| 73         | `voltage`                            |
+| 76         | `activeCurrent`                      |
+| 79         | `frequency`                          |
 
 A plant exports energy, so the production feeds the *exported* side of the
 meter, not the imported one.
 
-`Etdy_ge0` is the production of today. It resets each night, so it cannot feed
-a cumulative attribute and is ignored. Your controller can derive the daily
-figure from the total.
+Register 60 holds the production of today. It resets each night, so it cannot
+feed a cumulative attribute; the page shows it, and Matter gets the lifetime
+total instead. Your controller can derive the day from that.
 
-## Choosing the data center
+Only Modbus function 3, read holding registers, is ever sent. Nothing in the
+bridge can change a setting on the logger or the inverter.
 
-The account decides which data center answers, not where you live. The bridge
-uses the international one. If the login fails with `2101009 appId or api is
-locked`, set `SOLARMAN_ENDPOINT=https://api.solarmanpv.com`.
+## Nights
 
-A SOLARMAN Business account also needs `SOLARMAN_ORG_ID`. Without it the login
-succeeds but the plant list comes back empty.
+The logger is powered by the inverter, which is powered by the sun, so it
+disappears every night. That is not a fault:
+
+- The Matter device stays, marked unreachable, and keeps its last values. A
+  controller that dropped the device each evening would lose its history.
+- The device is named after the inverter serial, not the address, so it
+  survives a logger that DHCP moved. The serial is asked of the logger once and
+  written to the state file.
+- A first run started after dark therefore has no serial to publish. The
+  inverter appears at first light, and every run after that is immediate.
 
 ## State
 
-The Matter fabric and node state live in `~/.matter/solarman-matter`. The list
-of exposed plants is in `~/.matter/solarman-matter-devices.json`.
+The Matter fabric and node state live in `~/.matter/solarman-matter`. The
+serial behind each address is in `~/.matter/solarman-matter-inverters.json`.
 
 ## Clearing the pairings
 
@@ -153,22 +135,20 @@ bun start
 ```
 
 The bridge then prints a new pairing code, on the page and in the log. Your
-controller keeps a dead entry for the old bridge, so remove it by hand. The list
-of exposed plants survives.
+controller keeps a dead entry for the old bridge, so remove it by hand.
 
 ## Limits
 
-- Production only. Batteries, meters, grid import and consumption are not
-  exposed yet.
-- Inverters only. A data logger reports no production, so it is not exposed.
-- A plant with more than one inverter gets one Matter device per inverter. The
-  bridge does not add them up.
-- A plant that reports megawatts gets no reading. Lowercased, `MWh` and `mWh`
-  are the same text, so the bridge refuses the guess instead of being wrong by
-  a factor of a thousand million.
-- Polling only. Solarman refreshes about every five minutes, and each read
-  spends part of the call allowance of your app, so a short interval only wastes
-  it.
+- Production only. Batteries, meters, grid import and household consumption are
+  not exposed.
+- The first AC phase only. The registers carry three, and a single-phase
+  inverter reports zero for the other two, which Matter cannot tell apart from
+  a real zero.
+- No DC strings. The logger reports volts, amps and watts for each string, but
+  the Matter electrical sensor describes an AC meter.
+- One Matter device per inverter. A plant with several is not added up.
+- The register map is the Deye string profile. Hybrid and battery inverters
+  answer a different one and are untested.
 - The web page has no authentication. Keep it on a trusted network.
 
 ## Development
@@ -191,3 +171,10 @@ git push origin v0.1.0
 
 The web page is inlined in `src/page.ts` so the binary stays a single file.
 Edit it there.
+
+## Credits
+
+The Solarman V5 client is the one from [electrify][electrify], where it was
+checked against the Solarman cloud and reported the same values, to the digit.
+
+[electrify]: https://github.com/caarlos0/electrify

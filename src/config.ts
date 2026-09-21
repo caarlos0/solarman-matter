@@ -2,12 +2,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type Config = {
-  endpoint: string;
-  appId: string;
-  appSecret: string;
-  email: string;
+  hosts: string[];
+  user: string;
   password: string;
-  orgId?: number;
   pollIntervalMs: number;
   stateFile: string;
   webPort: number;
@@ -17,14 +14,6 @@ export type Config = {
     port: number;
   };
 };
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`missing required environment variable ${name}`);
-  }
-  return value;
-}
 
 function optionalNumber(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
@@ -39,30 +28,45 @@ function optionalNumber(name: string, fallback: number): number {
 }
 
 /**
- * Every setting is prefixed. Bare names such as `APP_ID` collide with other
- * tools, and a real environment variable silently wins over the `.env` file.
+ * The addresses of the data loggers, one per inverter.
+ *
+ * A mistyped address only ever looks like a logger that is asleep, so an
+ * empty list is refused outright rather than starting a bridge with nothing
+ * behind it.
+ */
+function loadHosts(): string[] {
+  const hosts = (process.env.SOLARMAN_LOCAL_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
+
+  if (hosts.length === 0) {
+    throw new Error(
+      "missing required environment variable SOLARMAN_LOCAL_HOSTS",
+    );
+  }
+  return [...new Set(hosts)];
+}
+
+/**
+ * Every setting is prefixed. Bare names such as `LOCAL_HOSTS` collide with
+ * other tools, and a real environment variable silently wins over the `.env`
+ * file.
  */
 export function loadConfig(): Config {
-  const orgId = process.env.SOLARMAN_ORG_ID?.trim();
-
   return {
-    // Solarman keeps two data centers. The account decides which one answers.
-    endpoint:
-      process.env.SOLARMAN_ENDPOINT?.trim() ||
-      "https://globalapi.solarmanpv.com",
-    appId: required("SOLARMAN_APP_ID"),
-    appSecret: required("SOLARMAN_APP_SECRET"),
-    email: required("SOLARMAN_EMAIL"),
-    password: required("SOLARMAN_PASSWORD"),
-    orgId: orgId ? optionalNumber("SOLARMAN_ORG_ID", 0) : undefined,
-    // The cloud refreshes about every five minutes, and each read spends part
-    // of the call allowance of the app, so a fast poll only wastes it.
-    pollIntervalMs: optionalNumber("SOLARMAN_POLL_INTERVAL", 300) * 1000,
+    hosts: loadHosts(),
+    // These loggers ship with admin/admin and are rarely changed.
+    user: process.env.SOLARMAN_LOCAL_USER?.trim() || "admin",
+    password: process.env.SOLARMAN_LOCAL_PASSWORD?.trim() || "admin",
+    // The inverter refreshes every few seconds, and a read costs nothing but
+    // a packet on the local network.
+    pollIntervalMs: optionalNumber("SOLARMAN_POLL_INTERVAL", 30) * 1000,
     stateFile:
       process.env.SOLARMAN_STATE_FILE?.trim() ||
       join(
         process.env.MATTER_STORAGE_PATH?.trim() || join(homedir(), ".matter"),
-        "solarman-matter-devices.json",
+        "solarman-matter-inverters.json",
       ),
     webPort: optionalNumber("SOLARMAN_WEB_PORT", 8080),
     matter: {

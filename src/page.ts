@@ -129,7 +129,6 @@ export const PAGE = `<!doctype html>
   <body>
     <header>
       <h1>solarman-matter</h1>
-      <button id="refresh">Refresh from Solarman</button>
     </header>
 
     <p class="error" id="error"></p>
@@ -138,12 +137,13 @@ export const PAGE = `<!doctype html>
     <table>
       <thead>
         <tr>
-          <th>Plant</th>
-          <th>Reports</th>
-          <th>Matter</th>
+          <th>Inverter</th>
+          <th>Now</th>
+          <th>Today</th>
+          <th>Total</th>
         </tr>
       </thead>
-      <tbody id="devices"></tbody>
+      <tbody id="inverters"></tbody>
     </table>
 
     <footer>
@@ -162,94 +162,69 @@ export const PAGE = `<!doctype html>
     </footer>
 
     <script type="module">
-      // Matter reports milli-units, so each reading is divided back.
-      const UNITS = {
-        power: ["W", 1000, 0],
-        energy: ["kWh", 1000000, 1],
-        voltage: ["V", 1000, 1],
-        current: ["A", 1000, 2],
-        frequency: ["Hz", 1000, 2],
-      };
-
-      const tbody = document.getElementById("devices");
+      const tbody = document.getElementById("inverters");
       const errorBox = document.getElementById("error");
       const pairing = document.getElementById("pairing");
-      const refresh = document.getElementById("refresh");
 
-      async function call(path, options) {
-        const response = await fetch(path, options);
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error ?? response.statusText);
-        return body;
+      function watts(readings) {
+        return readings ? \`\${(readings.power / 1000).toFixed(0)} W\` : "—";
       }
 
-      function format(device) {
-        return Object.entries(device.readings)
-          .map(([quantity, value]) => {
-            const [unit, divisor, decimals] = UNITS[quantity];
-            return \`\${(value / divisor).toFixed(decimals)} \${unit}\`;
-          })
-          .join(" · ");
+      function kwh(value) {
+        return value === undefined ? "—" : \`\${value.toFixed(1)} kWh\`;
       }
 
-      function capabilities(device) {
-        return device.quantities.length
-          ? device.quantities.join(", ")
-          : "no production data";
+      function total(readings) {
+        return readings ? kwh(readings.energy / 1000000) : "—";
       }
 
-      function render(devices) {
+      /** The logger is powered by the inverter, so it is gone every night. */
+      function condition(inverter) {
+        if (inverter.error) return inverter.error;
+        if (inverter.reachable) return inverter.host;
+        if (!inverter.serial) return \`\${inverter.host} · waiting for daylight\`;
+        return \`\${inverter.host} · asleep\`;
+      }
+
+      function render(inverters) {
         tbody.replaceChildren(
-          ...devices.map((device) => {
+          ...inverters.map((inverter) => {
             const row = document.createElement("tr");
-            if (!device.online) row.className = "offline";
+            if (!inverter.reachable) row.className = "offline";
 
             const name = document.createElement("td");
-            name.innerHTML = \`<div class="name"></div><div class="sub"></div><div class="readings"></div>\`;
-            name.querySelector(".name").textContent = device.name;
-            name.querySelector(".sub").textContent =
-              \`\${device.productName}\${device.online ? "" : " · offline"}\`;
-            name.querySelector(".readings").textContent = device.enabled
-              ? format(device)
-              : "";
+            name.innerHTML = \`<div class="name"></div><div class="sub"></div>\`;
+            name.querySelector(".name").textContent =
+              inverter.serial ?? inverter.host;
+            name.querySelector(".sub").textContent = condition(inverter);
 
-            const measures = document.createElement("td");
-            measures.className = "sub";
-            measures.textContent = capabilities(device);
+            const now = document.createElement("td");
+            now.className = "readings";
+            now.textContent = inverter.reachable ? watts(inverter.readings) : "—";
 
-            const action = document.createElement("td");
-            const button = document.createElement("button");
-            button.textContent = device.enabled ? "Remove" : "Expose";
-            button.disabled = !device.quantities.length;
-            button.onclick = async () => {
-              button.disabled = true;
-              await update(\`/api/devices/\${encodeURIComponent(device.id)}\`, {
-                method: "PUT",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ enabled: !device.enabled }),
-              });
-            };
-            action.append(button);
+            const today = document.createElement("td");
+            today.className = "readings";
+            // Today's total resets each night, so a sleeping logger would
+            // leave yesterday's figure standing under a column named Today.
+            today.textContent = inverter.reachable
+              ? kwh(inverter.todayKwh)
+              : "—";
 
-            row.append(name, measures, action);
+            const lifetime = document.createElement("td");
+            lifetime.className = "readings";
+            lifetime.textContent = total(inverter.readings);
+
+            row.append(name, now, today, lifetime);
             return row;
           }),
         );
       }
 
-      async function update(path, options) {
-        errorBox.textContent = "";
-        try {
-          render((await call(path, options)).devices);
-        } catch (error) {
-          errorBox.textContent = error.message;
-          await load();
-        }
-      }
-
       async function load() {
-        const state = await call("/api/state");
-        render(state.devices);
+        const response = await fetch("/api/state");
+        const state = await response.json();
+        if (!response.ok) throw new Error(state.error ?? response.statusText);
+        render(state.inverters);
         if (state.commissioning) {
           pairing.hidden = false;
           pairing.innerHTML = \`Pair this bridge with code <code></code> · <a target="_blank" rel="noreferrer">QR code</a>\`;
@@ -262,14 +237,17 @@ export const PAGE = `<!doctype html>
         }
       }
 
-      refresh.onclick = async () => {
-        refresh.disabled = true;
-        await update("/api/refresh", { method: "POST" });
-        refresh.disabled = false;
-      };
+      async function refresh() {
+        try {
+          await load();
+          errorBox.textContent = "";
+        } catch (error) {
+          errorBox.textContent = error.message;
+        }
+      }
 
-      await load();
-      setInterval(() => load().catch(() => {}), 10000);
+      await refresh();
+      setInterval(refresh, 10000);
     </script>
   </body>
 </html>
