@@ -312,7 +312,10 @@ export class SolarmanLocal {
             : unreachable("connection closed"),
         );
         socket.on("data", (chunk) => {
-          pending = Buffer.concat([pending, chunk]);
+          pending = Buffer.concat([
+            pending,
+            typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+          ]);
           try {
             while (pending.length >= 3) {
               const length = pending.readUInt16LE(1) + 13;
